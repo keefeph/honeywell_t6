@@ -1,0 +1,83 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Honeywell T6 hysteresis control",
+        "description": "Pick the Z-Wave JS climate entity of your Honeywell T6 Pro Z-Wave thermostat.",
+        "data": {
+          "source_entity_id": "T6 thermostat (Z-Wave JS climate entity)",
+          "name": "Name"
+        }
+      }
+    },
+    "error": { "entity_not_found": "That entity does not exist." },
+    "abort": { "already_configured": "This thermostat is already set up." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hysteresis behaviour",
+        "data": {
+          "strategy": "How to hold the equipment off while resting",
+          "drive_offset": "Drive offset",
+          "min_gap": "Minimum band width",
+          "initial_phase": "When switched on inside the band",
+          "follow_wall_changes": "Follow mode changes made on the thermostat",
+          "temperature_sensor": "External temperature sensor (optional)"
+        },
+        "data_description": {
+          "drive_offset": "While running, the T6 set point is pushed this far past the band edge so the T6's own cycle-rate logic doesn't stop short.",
+          "temperature_sensor": "Use a room sensor instead of the T6's built-in reading for the hysteresis decisions."
+        }
+      }
+    }
+  },
+  "selector": {
+    "strategy": {
+      "options": {
+        "setpoint": "Move the set point (fail-safe: T6 keeps regulating if Home Assistant stops)",
+        "mode": "Switch the T6 to Off while resting (strict)"
+      }
+    },
+    "initial_phase": {
+      "options": {
+        "resting": "Rest until the band edge (saves energy)",
+        "running": "Run to the far edge first (comfort)"
+      }
+    }
+  },
+  "entity": {
+    "climate": { "hysteresis": { "name": "Hysteresis" } },
+    "sensor": {
+      "phase": {
+        "name": "Hysteresis phase",
+        "state": {
+          "off": "Off",
+          "running": "Running",
+          "resting": "Resting",
+          "override": "Manual override"
+        }
+      }
+    },
+    "button": { "refresh_parameters": { "name": "Re-read thermostat settings" } }
+  },
+  "services": {
+    "set_band": {
+      "name": "Set band",
+      "description": "Set the low and high set points of the hysteresis band.",
+      "fields": {
+        "low": { "name": "Low set point", "description": "Heating restarts / cooling stops here." },
+        "high": { "name": "High set point", "description": "Heating stops / cooling restarts here." }
+      }
+    },
+    "force_phase": {
+      "name": "Force phase",
+      "description": "Immediately start a running or resting phase.",
+      "fields": { "phase": { "name": "Phase", "description": "running or resting" } }
+    },
+    "refresh_parameters": {
+      "name": "Re-read thermostat settings",
+      "description": "Ask the T6 to report all of its configuration parameters again."
+    }
+  }
+}

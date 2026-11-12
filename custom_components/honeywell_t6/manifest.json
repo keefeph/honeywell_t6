@@ -1,0 +1,13 @@
+{
+  "domain": "honeywell_t6",
+  "name": "Honeywell T6 Hysteresis",
+  "codeowners": ["@keefeph"],
+  "config_flow": true,
+  "dependencies": ["http", "frontend", "zwave_js"],
+  "documentation": "https://github.com/keefeph/honeywell_t6",
+  "integration_type": "helper",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/keefeph/honeywell_t6/issues",
+  "requirements": [],
+  "version": "1.0.4"
+}

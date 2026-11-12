@@ -1,0 +1,40 @@
+set_band:
+  target:
+    entity:
+      integration: honeywell_t6
+      domain: climate
+  fields:
+    low:
+      required: true
+      selector:
+        number:
+          min: 40
+          max: 99
+          step: 0.5
+          mode: box
+    high:
+      required: true
+      selector:
+        number:
+          min: 40
+          max: 99
+          step: 0.5
+          mode: box
+force_phase:
+  target:
+    entity:
+      integration: honeywell_t6
+      domain: climate
+  fields:
+    phase:
+      required: true
+      selector:
+        select:
+          options:
+            - running
+            - resting
+refresh_parameters:
+  target:
+    entity:
+      integration: honeywell_t6
+      domain: climate
