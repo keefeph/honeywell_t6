@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Final
 
 DOMAIN: Final = "honeywell_t6"
-VERSION: Final = "1.0.4"
+VERSION: Final = "1.1.0"
 
 CONF_SOURCE: Final = "source_entity_id"
 CONF_STRATEGY: Final = "strategy"
@@ -43,6 +43,18 @@ ATTR_CATEGORY: Final = "category"
 SERVICE_SET_BAND: Final = "set_band"
 SERVICE_FORCE_PHASE: Final = "force_phase"
 SERVICE_REFRESH_PARAMS: Final = "refresh_parameters"
+SERVICE_SET_SCHEDULE: Final = "set_schedule"
+SERVICE_SET_SCHEDULE_ENABLED: Final = "set_schedule_enabled"
+SERVICE_SET_HOLD: Final = "set_hold"
+SERVICE_RESUME_SCHEDULE: Final = "resume_schedule"
+
+ATTR_SCHEDULE: Final = "schedule"
+ATTR_SCHEDULE_ENABLED: Final = "schedule_enabled"
+ATTR_SCHEDULE_PERIOD: Final = "schedule_period"
+ATTR_SCHEDULE_NEXT: Final = "schedule_next"
+ATTR_SCHEDULE_STATUS: Final = "schedule_status"
+ATTR_HOLD: Final = "hold"
+ATTR_HOLD_UNTIL: Final = "hold_until"
 
 CARD_URL: Final = f"/{DOMAIN}/t6-hysteresis-card.js"
 SIGNAL_STATE: Final = f"{DOMAIN}_state_{{}}"

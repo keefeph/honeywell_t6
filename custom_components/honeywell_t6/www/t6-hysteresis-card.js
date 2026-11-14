@@ -5,7 +5,7 @@
  * show_settings: true        # optional \u2013 installer parameter panel
  * range: [55, 85]            # optional \u2013 slider range (default: band \u00b18\u00b0)
  */
-const CARD_VERSION = "1.0.4";
+const CARD_VERSION = "1.1.0";
 
 const CATEGORY_ORDER = [
   "Equipment",
@@ -85,12 +85,43 @@ const css = `
   .actions button { padding: 6px 12px; border-radius: 8px; border:1px solid var(--divider-color,#ccc);
       background:none; color: var(--primary-text-color); cursor:pointer; font: inherit; }
   .err { color: var(--error-color, #db4437); padding: 8px; }
+
+  .schedbar { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
+      margin-top: 12px; padding: 8px 10px; border-radius: 10px; background: var(--secondary-background-color, #f5f5f5); }
+  .schedbar .txt { font-size:.9em; color: var(--primary-text-color); }
+  .schedbar .txt.held { color: var(--warning-color, #c77700); font-weight: 500; }
+  .schedbar .btns { display:flex; gap:6px; }
+  .pill { padding: 5px 12px; border-radius: 14px; border: 1px solid var(--divider-color,#ccc); background: var(--card-background-color,#fff);
+      color: var(--primary-text-color); cursor:pointer; font: inherit; font-size:.85em; }
+  .pill.primary { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); border-color: transparent; }
+  .pill:disabled { opacity: .45; cursor: default; }
+  .sedit .top { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; margin: 6px 0 10px; }
+  .sedit select { padding: 5px; border-radius: 6px; border:1px solid var(--divider-color,#ccc);
+      background: var(--card-background-color,#fff); color: var(--primary-text-color); font: inherit; }
+  .tabs { display:flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+  .tab { padding: 5px 10px; border-radius: 8px; border: 1px solid var(--divider-color,#ccc); background:none;
+      color: var(--primary-text-color); cursor:pointer; font: inherit; font-size:.85em; }
+  .tab.on { border-color: var(--primary-color, #03a9f4); color: var(--primary-color, #03a9f4); font-weight: 500; }
+  .tab.heat.on { border-color: var(--t6-heat); color: var(--t6-heat); }
+  .tab.cool.on { border-color: var(--t6-cool); color: var(--t6-cool); }
+  .ptable { width:100%; border-collapse: collapse; font-size:.9em; }
+  .ptable th { text-align:left; font-weight: 400; font-size:.8em; color: var(--secondary-text-color); padding: 2px 4px; }
+  .ptable td { padding: 3px 4px; }
+  .ptable input { width: 100%; box-sizing: border-box; padding: 5px; border-radius: 6px; border: 1px solid var(--divider-color,#ccc);
+      background: var(--card-background-color,#fff); color: var(--primary-text-color); font: inherit; }
+  .ptable td.num { width: 64px; } .ptable td.time { width: 104px; } .ptable td.del { width: 30px; text-align:center; }
+  .ptable tr.now td:first-child input { border-color: var(--accent); }
+  .del button { border:none; background:none; color: var(--secondary-text-color); font-size: 1.2em; cursor:pointer; }
+  .del button:disabled { opacity:.3; cursor: default; }
+  .sactions { display:flex; gap:8px; align-items:center; margin-top: 10px; flex-wrap: wrap; }
+  .smsg { font-size:.85em; color: var(--secondary-text-color); }
+  .smsg.bad { color: var(--error-color, #db4437); }
 `;
 
 class T6HysteresisCard extends HTMLElement {
   setConfig(config) {
     if (!config || !config.entity) throw new Error("Set 'entity' to the T6 hysteresis climate entity");
-    this._config = { show_settings: true, ...config };
+    this._config = { show_settings: true, show_schedule: true, ...config };
     this._dragging = false;
     this._pending = null;
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
@@ -104,7 +135,7 @@ class T6HysteresisCard extends HTMLElement {
     return { entity: e || "climate.t6_hysteresis", show_settings: true };
   }
 
-  getCardSize() { return this._config && this._config.show_settings ? 9 : 6; }
+  getCardSize() { return this._config && this._config.show_settings ? 10 : 7; }
 
   set hass(hass) {
     this._hass = hass;
@@ -127,6 +158,7 @@ class T6HysteresisCard extends HTMLElement {
           <div><div class="name"></div><div class="status"></div><span class="chip"></span></div>
           <div class="now"><div class="t"></div><div class="h"></div></div>
         </div>
+        <div class="schedbar"><span class="txt"></span><span class="btns"></span></div>
         <div class="band">
           <div class="track"></div><div class="fill"></div>
           <div class="marker"><span></span></div>
@@ -149,6 +181,7 @@ class T6HysteresisCard extends HTMLElement {
           <button class="cool" data-mode="cool">Cool</button>
         </div>
         <div class="fanlbl">Fan</div><div class="fans"></div>
+        <details class="sched"><summary>Schedule</summary><div class="sedit"></div></details>
         <details class="settings"><summary>Thermostat settings (installer parameters)</summary>
           <div class="warn">These are the T6's Z-Wave configuration parameters. Equipment-type and staging
           parameters must match your wiring \u2014 wrong values can damage HVAC equipment. Some are disabled by
@@ -195,6 +228,16 @@ class T6HysteresisCard extends HTMLElement {
     this._built = true;
     this._paramKey = null;
     this._fanKey = null;
+    this._barKey = null;
+    this._schedKey = null;
+    this._draft = null;
+    this._dirty = false;
+    this._sSeason = null;
+    this._sGroup = 0;
+    this._sMsg = "";
+    const showSched = this._config.show_schedule;
+    r.querySelector(".sched").style.display = showSched ? "" : "none";
+    r.querySelector(".schedbar").style.display = showSched ? "" : "none";
   }
 
   _gap() {
@@ -268,6 +311,221 @@ class T6HysteresisCard extends HTMLElement {
     fbox.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.fan === a.fan_mode));
 
     if (this._config.show_settings) this._updateParams(a.parameter_entities || []);
+    if (this._config.show_schedule) { this._updateSchedBar(a); this._updateSchedEditor(st); }
+  }
+
+  // -------------------------------------------------------------- schedule
+  _svc(service, data = {}) {
+    return this._hass.callService("honeywell_t6", service, { entity_id: this._config.entity, ...data });
+  }
+
+  _updateSchedBar(a) {
+    if (a.schedule_enabled === undefined) {  // integration older than 1.1
+      this.shadowRoot.querySelector(".schedbar").style.display = "none";
+      return;
+    }
+    const key = [a.schedule_status, a.hold, a.schedule_enabled].join("|");
+    if (key === this._barKey) return;
+    this._barKey = key;
+    const bar = this.shadowRoot.querySelector(".schedbar");
+    const txt = bar.querySelector(".txt");
+    txt.textContent = a.schedule_status || "";
+    txt.classList.toggle("held", !!a.hold);
+    const btns = bar.querySelector(".btns");
+    btns.innerHTML = "";
+    const add = (label, fn, primary) => {
+      const b = document.createElement("button");
+      b.className = "pill" + (primary ? " primary" : "");
+      b.textContent = label;
+      b.addEventListener("click", fn);
+      btns.appendChild(b);
+    };
+    if (!a.schedule_enabled) {
+      add("Turn schedule on", () => this._svc("set_schedule_enabled", { enabled: true }), true);
+    } else if (a.hold === "next") {
+      add("Resume schedule", () => this._svc("resume_schedule"), true);
+      add("Hold permanently", () => this._svc("set_hold", { type: "permanent" }));
+    } else if (a.hold === "permanent") {
+      add("Resume schedule", () => this._svc("resume_schedule"), true);
+    } else {
+      add("Hold", () => this._svc("set_hold", { type: "permanent" }));
+      add("Schedule off", () => this._svc("set_schedule_enabled", { enabled: false }));
+    }
+  }
+
+  static get LAYOUTS() {
+    return {
+      same: { label: "Every day", groups: [["Every day", ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]]] },
+      weekday_weekend: { label: "Weekdays + weekend",
+        groups: [["Mon\u2013Fri", ["mon", "tue", "wed", "thu", "fri"]], ["Sat\u2013Sun", ["sat", "sun"]]] },
+      each_day: { label: "Each day separately",
+        groups: [["Mon", ["mon"]], ["Tue", ["tue"]], ["Wed", ["wed"]], ["Thu", ["thu"]], ["Fri", ["fri"]],
+                 ["Sat", ["sat"]], ["Sun", ["sun"]]] },
+    };
+  }
+
+  _groups() { return T6HysteresisCard.LAYOUTS[this._draft.layout].groups; }
+
+  _propagate() {  // make every day in a group match the group's first day
+    for (const [, days] of this._groups()) {
+      for (const d of days.slice(1)) this._draft.days[d] = JSON.parse(JSON.stringify(this._draft.days[days[0]]));
+    }
+  }
+
+  _updateSchedEditor(st) {
+    const a = st.attributes;
+    const sched = a.schedule;
+    if (!sched) { this.shadowRoot.querySelector(".sched").style.display = "none"; return; }
+    if (this._sSeason === null) this._sSeason = st.state === "cool" ? "cool" : "heat";
+    const key = JSON.stringify(sched);
+    if (!this._dirty && key !== this._schedKey) {
+      this._schedKey = key;
+      this._draft = JSON.parse(key);
+      if (this._sGroup >= this._groups().length) this._sGroup = 0;
+      this._renderSchedEditor();
+    } else if (!this._dirty) {
+      this._markCurrentRow();
+    }
+  }
+
+  _markCurrentRow() {
+    const st = this._hass.states[this._config.entity], a = st.attributes;
+    const today = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][new Date().getDay()];
+    const season = st.state === "cool" ? "cool" : "heat";
+    const showing = this._draft && this._groups()[this._sGroup][1].includes(today) && this._sSeason === season;
+    this.shadowRoot.querySelectorAll(".ptable tr[data-name]").forEach((tr) =>
+      tr.classList.toggle("now", !!a.schedule_enabled && showing && tr.dataset.name === a.schedule_period));
+  }
+
+  _renderSchedEditor() {
+    const box = this.shadowRoot.querySelector(".sedit");
+    const st = this._hass.states[this._config.entity];
+    const step = st.attributes.target_temp_step || 1;
+    const u = this._unit();
+    const L = T6HysteresisCard.LAYOUTS;
+    const groups = this._groups();
+    const [, gdays] = groups[this._sGroup];
+    const list = this._draft.days[gdays[0]][this._sSeason];
+    box.innerHTML = "";
+
+    const top = document.createElement("div");
+    top.className = "top";
+    const lbl = document.createElement("span");
+    lbl.className = "smsg"; lbl.textContent = "Days:";
+    const sel = document.createElement("select");
+    for (const [k, v] of Object.entries(L)) {
+      const o = document.createElement("option"); o.value = k; o.textContent = v.label; sel.appendChild(o);
+    }
+    sel.value = this._draft.layout;
+    sel.addEventListener("change", () => {
+      this._draft.layout = sel.value; this._sGroup = 0; this._propagate(); this._setDirty(); this._renderSchedEditor();
+    });
+    top.append(lbl, sel);
+    box.appendChild(top);
+
+    const mkTabs = (items, current, onPick, extraClass) => {
+      const t = document.createElement("div"); t.className = "tabs";
+      items.forEach(([label, val]) => {
+        const b = document.createElement("button");
+        b.className = "tab " + (extraClass ? val : "") + (val === current ? " on" : "");
+        b.textContent = label;
+        b.addEventListener("click", () => { onPick(val); this._renderSchedEditor(); });
+        t.appendChild(b);
+      });
+      return t;
+    };
+    box.appendChild(mkTabs([["Heating bands", "heat"], ["Cooling bands", "cool"]], this._sSeason,
+      (v) => { this._sSeason = v; }, true));
+    if (groups.length > 1) {
+      box.appendChild(mkTabs(groups.map(([label], i) => [label, i]), this._sGroup, (v) => { this._sGroup = v; }));
+    }
+
+    const tbl = document.createElement("table");
+    tbl.className = "ptable";
+    tbl.innerHTML = `<tr><th>Period</th><th>Starts</th><th>Low ${u}</th><th>High ${u}</th><th></th></tr>`;
+    list.forEach((p, i) => {
+      const tr = document.createElement("tr");
+      tr.dataset.name = p.name;
+      const cell = (cls, el) => { const td = document.createElement("td"); td.className = cls; td.appendChild(el); tr.appendChild(td); };
+      const input = (type, value, onChange, extra = {}) => {
+        const el = document.createElement("input");
+        el.type = type; el.value = value; Object.assign(el, extra);
+        el.addEventListener("change", () => { onChange(el.value); this._propagate(); this._setDirty(); });
+        return el;
+      };
+      cell("name", input("text", p.name, (v) => { p.name = v; tr.dataset.name = v; }, { maxLength: 20 }));
+      cell("time", input("time", p.start, (v) => {
+        p.start = v;
+        list.sort((x, y) => (x.start < y.start ? -1 : 1));
+        setTimeout(() => this._renderSchedEditor(), 0);  // show the new order
+      }));
+      cell("num", input("number", p.low, (v) => { p.low = parseFloat(v); }, { step }));
+      cell("num", input("number", p.high, (v) => { p.high = parseFloat(v); }, { step }));
+      const del = document.createElement("button");
+      del.textContent = "\u00d7"; del.title = "Remove period"; del.disabled = list.length <= 1;
+      del.addEventListener("click", () => { list.splice(i, 1); this._propagate(); this._setDirty(); this._renderSchedEditor(); });
+      cell("del", del);
+      tbl.appendChild(tr);
+    });
+    box.appendChild(tbl);
+
+    const actions = document.createElement("div");
+    actions.className = "sactions";
+    const addBtn = document.createElement("button");
+    addBtn.className = "pill"; addBtn.textContent = "+ Add period"; addBtn.disabled = list.length >= 8;
+    addBtn.addEventListener("click", () => {
+      const last = list[list.length - 1];
+      const [h, m] = last.start.split(":").map(Number);
+      const next = `${String(Math.min(h + 1, 23)).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+      list.push({ name: "New", start: next, low: last.low, high: last.high });
+      this._propagate(); this._setDirty(); this._renderSchedEditor();
+    });
+    const save = document.createElement("button");
+    save.className = "pill primary"; save.textContent = "Save schedule"; save.disabled = !this._dirty;
+    save.addEventListener("click", () => this._saveSchedule());
+    const revert = document.createElement("button");
+    revert.className = "pill"; revert.textContent = "Revert"; revert.disabled = !this._dirty;
+    revert.addEventListener("click", () => {
+      this._dirty = false; this._schedKey = null; this._sMsg = "";
+      this._updateSchedEditor(this._hass.states[this._config.entity]);
+    });
+    const msg = document.createElement("span");
+    msg.className = "smsg" + (this._sMsgBad ? " bad" : "");
+    msg.textContent = this._sMsg || (this._dirty ? "Unsaved changes" : "");
+    actions.append(addBtn, save, revert, msg);
+    box.appendChild(actions);
+    this._markCurrentRow();
+  }
+
+  _setDirty() {
+    this._dirty = true; this._sMsg = ""; this._sMsgBad = false;
+    const r = this.shadowRoot;
+    r.querySelectorAll(".sactions .pill").forEach((b) => {
+      if (b.textContent !== "+ Add period") b.disabled = false;
+    });
+    const m = r.querySelector(".sactions .smsg");
+    if (m) { m.textContent = "Unsaved changes"; m.classList.remove("bad"); }
+  }
+
+  _saveSchedule() {
+    const fail = (text) => { this._sMsg = text; this._sMsgBad = true; this._renderSchedEditor(); };
+    for (const [d, seasons] of Object.entries(this._draft.days)) {
+      for (const [season, list] of Object.entries(seasons)) {
+        for (const p of list) {
+          if (!/^\d{1,2}:\d{2}$/.test(p.start || "")) return fail(`${d} ${season}: every period needs a start time`);
+          if (!(p.high > p.low)) return fail(`${d} ${season} ${p.name}: high must be above low`);
+        }
+        list.sort((x, y) => (x.start < y.start ? -1 : 1));
+      }
+    }
+    this._svc("set_schedule", { layout: this._draft.layout, days: this._draft.days })
+      .then(() => {
+        // Keep showing the draft; the editor refreshes when the new state arrives.
+        this._dirty = false; this._sMsg = "Saved"; this._sMsgBad = false;
+        this._schedKey = JSON.stringify(this._hass.states[this._config.entity].attributes.schedule);
+        this._renderSchedEditor();
+      })
+      .catch((err) => fail((err && err.message) || "Could not save"));
   }
 
   _pct(v) { return ((v - this._min) / (this._max - this._min)) * 100; }

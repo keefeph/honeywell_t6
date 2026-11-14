@@ -6,7 +6,8 @@ A custom integration and dashboard card for the **Honeywell T6 Pro Z-Wave (TH632
   * **Heat:** the furnace runs until the room reaches the **high** set point. Then it stays off until the room falls to the **low** set point.
   * **Cool:** the AC runs until the room reaches the **low** set point. Then it stays off until the room rises to the **high** set point.
 * **All 42 programmable (installer) parameters** of the T6 are exposed as `select` / `number` entities. Their values are read from and written to the thermostat over Z-Wave and update live.
-* **Dashboard card** (`custom:t6-hysteresis-card`). It loads automatically and has a dual-handle band slider, ± buttons, a live hysteresis-loop diagram, mode and fan buttons, and an *Installer parameters* panel grouped by category.
+* **Time-of-day schedule.** Wake / Away / Home / Sleep-style periods, each with its own low–high band, separately for heating and cooling. Use the same program every day, weekdays + weekend, or each day separately. A manual change holds until the next period, or you can hold permanently.
+* **Dashboard card** (`custom:t6-hysteresis-card`). It loads automatically and has a dual-handle band slider, ± buttons, a live hysteresis-loop diagram, mode and fan buttons, a schedule status line with Hold / Resume buttons, a schedule editor, and an *Installer parameters* panel grouped by category.
 
 ![card](docs/card.png)
 
@@ -14,13 +15,14 @@ A custom integration and dashboard card for the **Honeywell T6 Pro Z-Wave (TH632
 
 1. Copy `custom_components/honeywell_t6` into your HA `config/custom_components/`. With HACS, add `https://github.com/keefeph/honeywell_t6` as a custom repository of type *Integration* instead (the repository must be public for HACS).
 2. Restart Home Assistant.
-3. Go to **Settings → Devices & services → Add integration → "Honeywell T6 Hysteresis"** and pick the T6's Z-Wave JS climate entity.
-4. Add the card to a dashboard. You do not need to add a resource, because the integration registers it:
+3. Go to **Settings → Devices & services → Add integration → "Honeywell T6 Hysteresis"** and pick the T6's Z-Wave JS climate entity. It is a *helper*-type integration, so afterwards it is listed on the **Helpers** tab.
+4. Add the card to a dashboard. The integration registers the card file itself. If the editor says *Custom element doesn't exist*, add it under **Settings → Dashboards → ⋮ → Resources** as `/honeywell_t6/t6-hysteresis-card.js?v=1.1.0` (JavaScript module) and reload the page.
 
 ```yaml
 type: custom:t6-hysteresis-card
 entity: climate.living_room_t6_hysteresis   # the new climate entity
 show_settings: true                          # installer-parameter panel (default true)
+show_schedule: true                          # schedule line + editor (default true)
 # range: [55, 85]                            # optional fixed slider range
 ```
 
@@ -32,6 +34,7 @@ The new entities are attached to the existing T6 device page:
 | `sensor.<t6>_hysteresis_phase` | `running` / `resting` / `off` / `override`. Use it for history and automations |
 | `select.<t6>_pNN_…`, `number.<t6>_pNN_…` | The 42 configuration parameters |
 | `button.<t6>_re_read_thermostat_settings` | Asks the T6 to report every parameter again |
+| `switch.<t6>_schedule` | Schedule on/off (handy for vacation automations) |
 
 The original Z-Wave JS climate entity is left untouched. Don't control it from other automations at the same time.
 
@@ -59,9 +62,26 @@ The **drive offset** defaults to 1 °F / 0.5 °C. It stops the T6's cycle-rate l
 | Follow mode changes made on the thermostat | on | Wall change to Heat/Cool/Off is adopted. Auto / Em Heat suspends control (`override`) until you pick a mode in HA. |
 | External temperature sensor | — | Uses a room sensor for the decisions instead of the T6's own reading |
 
+## Time-of-day schedule
+
+Open **Schedule** on the card, choose which days share a program, pick *Heating bands* or *Cooling bands*, edit the periods and press **Save schedule**. Then press **Turn schedule on**, or turn on `switch.<t6>_schedule`.
+
+* **Periods.** Each period has a name, a start time and a low/high band. It runs until the next period starts, wrapping past midnight. There can be 1–8 periods per day. The default is Wake 06:00, Away 08:00, Home 17:00 and Sleep 22:00.
+* **Days.** *Every day*, *Weekdays + weekend* or *Each day separately*, like the T6's own schedule types.
+* **Season.** Heat mode uses the heating bands and Cool mode uses the cooling bands. Switching mode switches the band immediately.
+* **Holds.** Changing the band by hand (slider, ±, `set_band`, `climate.set_temperature`) while the schedule is on creates a hold **until the next period starts**. **Hold** keeps the current band until you press **Resume schedule**.
+* The schedule, the on/off state and any hold are stored in Home Assistant and survive restarts.
+
+The status line shows what is happening, e.g. *Away until 17:00, then Home 67–70°* or *Hold until 17:00, then Home 67–70°*. The climate entity also exposes `schedule_period`, `schedule_next`, `hold` and `hold_until` for automations.
+
+Leave the thermostat's own program off (**P01 Schedule Type = No schedule on thermostat**). Otherwise the T6 changes its own set point at its period times, and Home Assistant moves it back within two minutes.
+
 ### Services
 
 * `honeywell_t6.set_band` (`low`, `high`). `climate.set_temperature` with `target_temp_low` / `target_temp_high` works too.
+* `honeywell_t6.set_schedule` (`layout`, `days`). `days` maps `mon`…`sun` to `heat` and `cool` lists of `{name, start: "HH:MM", low, high}`.
+* `honeywell_t6.set_schedule_enabled` (`enabled`)
+* `honeywell_t6.set_hold` (`type`: `next` or `permanent`), `honeywell_t6.resume_schedule`
 * `honeywell_t6.force_phase` (`running` / `resting`)
 * `honeywell_t6.refresh_parameters`
 
@@ -71,7 +91,7 @@ The **drive offset** defaults to 1 °F / 0.5 °C. It stops the T6's cycle-rate l
 * **The T6 still protects the equipment.** Compressor protection (P26), cycle rates (P20–P25) and min/max limits (P28/P29) remain active inside the thermostat.
 * **Battery-only T6 (no C-wire).** The thermostat sleeps, so set-point and parameter writes are queued until it wakes. The hysteresis will be late by up to the wake interval. A C-wire is strongly recommended.
 * **Z-Wave traffic.** At most one set-point/mode command per phase change, plus a reconcile every 2 min if the device drifted. Identical commands are not re-sent within 60 s.
-* **State survives restarts.** Band, mode, phase and cycle count are restored after an HA restart.
+* **State survives restarts.** Band, mode, phase, cycle count, schedule and holds are restored after an HA restart.
 
 ## Configuration parameters
 
@@ -126,5 +146,5 @@ Generated from the Z-Wave JS device database. At runtime, the live metadata Z-Wa
 
 ```bash
 pip install pytest-homeassistant-custom-component
-pytest            # 9 state-machine tests + 12 end-to-end tests against a real HA core and a simulated T6
+pytest            # state machine + schedule unit tests, and end-to-end tests against a real HA core with a simulated T6 and a moving clock
 ```

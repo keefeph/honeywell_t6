@@ -1,7 +1,7 @@
 """Hysteresis climate entity that drives a Honeywell T6 Pro Z-Wave thermostat."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 import time
 from typing import Any
@@ -38,20 +38,32 @@ from homeassistant.const import (
 )
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import entity_platform, entity_registry as er
+from homeassistant.helpers import config_validation as cv, entity_platform, entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_point_in_time,
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from . import T6ConfigEntry
 from .const import (
     ATTR_CYCLES,
     ATTR_DEVICE_MODE,
     ATTR_DEVICE_SETPOINT,
+    ATTR_HOLD,
+    ATTR_HOLD_UNTIL,
     ATTR_OVERRIDE,
     ATTR_PARAM_ENTITIES,
     ATTR_PHASE,
+    ATTR_SCHEDULE,
+    ATTR_SCHEDULE_ENABLED,
+    ATTR_SCHEDULE_NEXT,
+    ATTR_SCHEDULE_PERIOD,
+    ATTR_SCHEDULE_STATUS,
     ATTR_STATUS,
     ATTR_STRATEGY,
     COMMAND_HOLDOFF,
@@ -66,12 +78,18 @@ from .const import (
     RECONCILE_INTERVAL,
     SERVICE_FORCE_PHASE,
     SERVICE_REFRESH_PARAMS,
+    SERVICE_RESUME_SCHEDULE,
     SERVICE_SET_BAND,
+    SERVICE_SET_HOLD,
+    SERVICE_SET_SCHEDULE,
+    SERVICE_SET_SCHEDULE_ENABLED,
     SIGNAL_STATE,
     WALL_CHANGE_GRACE,
 )
 from .entity_param import attach_to_device
 from .hysteresis import DeviceCommand, HysteresisController, InitialPhase, Mode, Phase, Strategy
+from .schedule import HOLD_NEXT, HOLD_PERMANENT
+from .schedule_logic import LAYOUTS, Resolution, resolve
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,6 +116,22 @@ async def async_setup_entry(
         "async_force_phase",
     )
     platform.async_register_entity_service(SERVICE_REFRESH_PARAMS, {}, "async_refresh_parameters")
+    platform.async_register_entity_service(
+        SERVICE_SET_SCHEDULE,
+        {vol.Required("layout"): vol.In(LAYOUTS), vol.Required("days"): dict},
+        "async_set_schedule",
+    )
+    platform.async_register_entity_service(
+        SERVICE_SET_SCHEDULE_ENABLED,
+        {vol.Required("enabled"): cv.boolean},
+        "async_set_schedule_enabled",
+    )
+    platform.async_register_entity_service(
+        SERVICE_SET_HOLD,
+        {vol.Optional("type", default=HOLD_NEXT): vol.In([HOLD_NEXT, HOLD_PERMANENT])},
+        "async_set_hold",
+    )
+    platform.async_register_entity_service(SERVICE_RESUME_SCHEDULE, {}, "async_resume_schedule")
 
 
 class T6HysteresisClimate(ClimateEntity, RestoreEntity):
@@ -108,6 +142,8 @@ class T6HysteresisClimate(ClimateEntity, RestoreEntity):
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL]
     _attr_should_poll = False
     _enable_turn_on_off_backwards_compatibility = False
+    # Large / static attributes the recorder doesn't need on every state change.
+    _unrecorded_attributes = frozenset({ATTR_SCHEDULE, ATTR_PARAM_ENTITIES})
 
     def __init__(self, hass: HomeAssistant, entry: T6ConfigEntry) -> None:
         self.hass = hass
@@ -132,6 +168,9 @@ class T6HysteresisClimate(ClimateEntity, RestoreEntity):
         self._last_cmd: DeviceCommand | None = None
         self._last_cmd_time = 0.0
         self._applying = False
+        self._sched = entry.runtime_data.schedule
+        self._resolution: Resolution | None = None
+        self._unsub_sched_timer: Any = None
         self._attr_unique_id = f"{entry.entry_id}_climate"
         self._attr_temperature_unit = hass.config.units.temperature_unit
         self._attr_target_temperature_step = self._ctl.step
@@ -178,8 +217,10 @@ class T6HysteresisClimate(ClimateEntity, RestoreEntity):
                 er.EVENT_ENTITY_REGISTRY_UPDATED, _registry_changed, event_filter=_registry_filter
             )
         )
+        self.async_on_remove(self._sched.add_listener(self._on_schedule_changed))
+        self.async_on_remove(self._cancel_sched_timer)
         self._sync_from_source()
-        await self._async_control()
+        await self._async_apply_schedule()
 
     def _restore(self, last: State) -> None:
         a = last.attributes
@@ -292,7 +333,9 @@ class T6HysteresisClimate(ClimateEntity, RestoreEntity):
             and event.data["entity_id"] == self._source
             and new.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
         ):
-            self._detect_wall_change(new)
+            if self._detect_wall_change(new):
+                await self._async_apply_schedule()  # season may have changed
+                return
         await self._async_control()
 
     async def _async_reconcile(self, _now: Any = None) -> None:
@@ -368,6 +411,67 @@ class T6HysteresisClimate(ClimateEntity, RestoreEntity):
             return f"Thermostat is in {self._override} mode (set at the wall)"
         return self._ctl.describe()
 
+    # ------------------------------------------------------------- schedule
+    def _season(self) -> str:
+        mode = self._ctl.mode if self._ctl.mode != Mode.OFF else self._last_on_mode
+        return "cool" if mode == Mode.COOL else "heat"
+
+    @callback
+    def _cancel_sched_timer(self) -> None:
+        if self._unsub_sched_timer:
+            self._unsub_sched_timer()
+            self._unsub_sched_timer = None
+
+    @callback
+    def _on_schedule_changed(self) -> None:
+        self.hass.async_create_task(self._async_apply_schedule())
+
+    @callback
+    def _on_sched_timer(self, _now: datetime) -> None:
+        self._unsub_sched_timer = None
+        self.hass.async_create_task(self._async_apply_schedule())
+
+    def _set_band_internal(self, low: float, high: float) -> None:
+        self._ctl.set_band(low, high)
+        # A band change can put the temperature outside the band – re-enter.
+        t = self._temperature()
+        if t is not None and self._ctl.mode != Mode.OFF and self._override is None:
+            if t <= self._ctl.low or t >= self._ctl.high:
+                self._ctl.phase = self._ctl._entry_phase(t)  # noqa: SLF001
+
+    async def _async_apply_schedule(self) -> None:
+        """Follow the program (unless held) and arm a timer for the next change."""
+        self._cancel_sched_timer()
+        self._resolution = None
+        if self._sched.enabled:
+            now = dt_util.now()
+            sched = self._sched
+            if sched.hold_type == HOLD_NEXT and sched.hold_until and sched.hold_until <= now:
+                sched.clear_hold(notify=False)
+            self._resolution = res = resolve(sched.schedule, now, self._season())
+            if not sched.held and (self._ctl.low, self._ctl.high) != (res.low, res.high):
+                _LOGGER.debug("%s: schedule -> %s %s-%s", self._source, res.name, res.low, res.high)
+                self._set_band_internal(res.low, res.high)
+            wake = res.next_at
+            if sched.hold_type == HOLD_NEXT and sched.hold_until:
+                wake = min(wake, sched.hold_until)
+            self._unsub_sched_timer = async_track_point_in_time(self.hass, self._on_sched_timer, wake)
+        await self._async_control()
+
+    def _schedule_status(self) -> str:
+        if not self._sched.enabled:
+            return "Schedule off"
+        res = self._resolution
+        if res is None:
+            return "Schedule on"
+        then = f"{res.next_name} {res.next_low:g}\u2013{res.next_high:g}\u00b0"
+        at = dt_util.as_local(res.next_at).strftime("%H:%M")
+        if self._sched.hold_type == HOLD_PERMANENT:
+            return "Permanent hold \u2013 schedule paused"
+        if self._sched.hold_type == HOLD_NEXT:
+            return f"Hold until {at}, then {then}"
+        return f"{res.name} until {at}, then {then}"
+
     # ------------------------------------------------------------ properties
     @property
     def hvac_mode(self) -> HVACMode:
@@ -404,6 +508,26 @@ class T6HysteresisClimate(ClimateEntity, RestoreEntity):
             "source_entity_id": self._source,
             "temperature_sensor": self._sensor,
             ATTR_PARAM_ENTITIES: self._param_entities(),
+            ATTR_SCHEDULE_ENABLED: self._sched.enabled,
+            ATTR_SCHEDULE_STATUS: self._schedule_status(),
+            ATTR_SCHEDULE_PERIOD: self._resolution.name if self._resolution else None,
+            ATTR_SCHEDULE_NEXT: (
+                {
+                    "name": self._resolution.next_name,
+                    "at": self._resolution.next_at.isoformat(),
+                    "low": self._resolution.next_low,
+                    "high": self._resolution.next_high,
+                }
+                if self._resolution
+                else None
+            ),
+            ATTR_HOLD: self._sched.hold_type if self._sched.enabled else None,
+            ATTR_HOLD_UNTIL: (
+                self._sched.hold_until.isoformat()
+                if self._sched.enabled and self._sched.hold_until
+                else None
+            ),
+            ATTR_SCHEDULE: self._sched.schedule,
         }
 
     def _param_entities(self) -> list[str]:
@@ -429,7 +553,7 @@ class T6HysteresisClimate(ClimateEntity, RestoreEntity):
         self._ctl.set_mode(mode, self._temperature())
         if mode != Mode.OFF:
             self._last_on_mode = mode
-        await self._async_control()
+        await self._async_apply_schedule()
 
     async def async_turn_on(self) -> None:
         await self.async_set_hvac_mode(HVACMode(self._last_on_mode.value))
@@ -445,19 +569,43 @@ class T6HysteresisClimate(ClimateEntity, RestoreEntity):
                 "This thermostat uses a band: provide target_temp_low and target_temp_high"
             )
         if (mode := kwargs.get(ATTR_HVAC_MODE)) is not None:
+            # Enter the new mode against the NEW band (decides running/resting).
+            new_mode = Mode(HVACMode(mode).value)
+            self._override = None
             self._ctl.set_band(float(low), float(high))
-            await self.async_set_hvac_mode(HVACMode(mode))
-            return
+            self._ctl.set_mode(new_mode, self._temperature())
+            if new_mode != Mode.OFF:
+                self._last_on_mode = new_mode
         await self.async_set_band(float(low), float(high))
 
     async def async_set_band(self, low: float, high: float) -> None:
-        self._ctl.set_band(low, high)
-        # A band change can put the temperature outside the band – re-enter.
-        t = self._temperature()
-        if t is not None and self._ctl.mode != Mode.OFF and self._override is None:
-            if t <= self._ctl.low or t >= self._ctl.high:
-                self._ctl.phase = self._ctl._entry_phase(t)  # noqa: SLF001
+        """Manual band change. With the schedule on, it becomes a temporary hold."""
+        self._set_band_internal(low, high)
+        if self._sched.enabled and self._sched.hold_type != HOLD_PERMANENT:
+            res = resolve(self._sched.schedule, dt_util.now(), self._season())
+            self._sched.set_hold(HOLD_NEXT, res.next_at)  # listener re-applies + publishes
+            return
         await self._async_control()
+
+    async def async_set_schedule(self, layout: str, days: dict) -> None:
+        try:
+            self._sched.set_schedule({"layout": layout, "days": days}, self._ctl.min_gap)
+        except (ValueError, KeyError, TypeError) as err:
+            raise ServiceValidationError(f"Invalid schedule: {err}") from err
+
+    async def async_set_schedule_enabled(self, enabled: bool) -> None:
+        self._sched.set_enabled(enabled)
+
+    async def async_set_hold(self, type: str = HOLD_NEXT) -> None:  # noqa: A002
+        if not self._sched.enabled:
+            raise ServiceValidationError("Turn the schedule on first")
+        until = None
+        if type == HOLD_NEXT:
+            until = resolve(self._sched.schedule, dt_util.now(), self._season()).next_at
+        self._sched.set_hold(type, until)
+
+    async def async_resume_schedule(self) -> None:
+        self._sched.clear_hold()
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         await self.hass.services.async_call(

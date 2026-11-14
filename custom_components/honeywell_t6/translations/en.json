@@ -10,8 +10,12 @@
         }
       }
     },
-    "error": { "entity_not_found": "That entity does not exist." },
-    "abort": { "already_configured": "This thermostat is already set up." }
+    "error": {
+      "entity_not_found": "That entity does not exist."
+    },
+    "abort": {
+      "already_configured": "This thermostat is already set up."
+    }
   },
   "options": {
     "step": {
@@ -47,7 +51,11 @@
     }
   },
   "entity": {
-    "climate": { "hysteresis": { "name": "Hysteresis" } },
+    "climate": {
+      "hysteresis": {
+        "name": "Hysteresis"
+      }
+    },
     "sensor": {
       "phase": {
         "name": "Hysteresis phase",
@@ -59,25 +67,83 @@
         }
       }
     },
-    "button": { "refresh_parameters": { "name": "Re-read thermostat settings" } }
+    "button": {
+      "refresh_parameters": {
+        "name": "Re-read thermostat settings"
+      }
+    },
+    "switch": {
+      "schedule": {
+        "name": "Schedule"
+      }
+    }
   },
   "services": {
     "set_band": {
       "name": "Set band",
       "description": "Set the low and high set points of the hysteresis band.",
       "fields": {
-        "low": { "name": "Low set point", "description": "Heating restarts / cooling stops here." },
-        "high": { "name": "High set point", "description": "Heating stops / cooling restarts here." }
+        "low": {
+          "name": "Low set point",
+          "description": "Heating restarts / cooling stops here."
+        },
+        "high": {
+          "name": "High set point",
+          "description": "Heating stops / cooling restarts here."
+        }
       }
     },
     "force_phase": {
       "name": "Force phase",
       "description": "Immediately start a running or resting phase.",
-      "fields": { "phase": { "name": "Phase", "description": "running or resting" } }
+      "fields": {
+        "phase": {
+          "name": "Phase",
+          "description": "running or resting"
+        }
+      }
     },
     "refresh_parameters": {
       "name": "Re-read thermostat settings",
       "description": "Ask the T6 to report all of its configuration parameters again."
+    },
+    "set_schedule": {
+      "name": "Set schedule",
+      "description": "Replace the time-of-day band program.",
+      "fields": {
+        "layout": {
+          "name": "Layout",
+          "description": "Which days are edited together: same, weekday_weekend or each_day."
+        },
+        "days": {
+          "name": "Days",
+          "description": "For each day (mon..sun): heat and cool lists of periods with name, start (HH:MM), low and high."
+        }
+      }
+    },
+    "set_schedule_enabled": {
+      "name": "Turn schedule on/off",
+      "description": "Follow the time-of-day program, or keep the band fixed.",
+      "fields": {
+        "enabled": {
+          "name": "Enabled",
+          "description": "true to follow the schedule."
+        }
+      }
+    },
+    "set_hold": {
+      "name": "Hold band",
+      "description": "Keep the current band instead of following the schedule.",
+      "fields": {
+        "type": {
+          "name": "Hold type",
+          "description": "next = until the next period starts; permanent = until resumed."
+        }
+      }
+    },
+    "resume_schedule": {
+      "name": "Resume schedule",
+      "description": "Cancel any hold and return to the scheduled band."
     }
   }
 }

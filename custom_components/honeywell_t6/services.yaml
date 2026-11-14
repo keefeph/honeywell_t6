@@ -38,3 +38,50 @@ refresh_parameters:
     entity:
       integration: honeywell_t6
       domain: climate
+set_schedule:
+  target:
+    entity:
+      integration: honeywell_t6
+      domain: climate
+  fields:
+    layout:
+      required: true
+      selector:
+        select:
+          options:
+            - same
+            - weekday_weekend
+            - each_day
+    days:
+      required: true
+      example: '{"mon": {"heat": [{"name": "Wake", "start": "06:00", "low": 67, "high": 70}], "cool": [{"name": "Day", "start": "06:00", "low": 74, "high": 77}]}, "tue": "..."}'
+      selector:
+        object:
+set_schedule_enabled:
+  target:
+    entity:
+      integration: honeywell_t6
+      domain: climate
+  fields:
+    enabled:
+      required: true
+      selector:
+        boolean:
+set_hold:
+  target:
+    entity:
+      integration: honeywell_t6
+      domain: climate
+  fields:
+    type:
+      default: next
+      selector:
+        select:
+          options:
+            - next
+            - permanent
+resume_schedule:
+  target:
+    entity:
+      integration: honeywell_t6
+      domain: climate

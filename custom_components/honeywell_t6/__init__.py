@@ -6,11 +6,12 @@ import logging
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import Platform, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import CARD_URL, CONF_SOURCE, DOMAIN, SIGNAL_STATE, VERSION
+from .schedule import ScheduleManager
 from .zwave import T6ZWaveBridge
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,12 +22,14 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
     Platform.NUMBER,
     Platform.BUTTON,
+    Platform.SWITCH,
 ]
 
 
 @dataclass
 class T6RuntimeData:
     bridge: T6ZWaveBridge
+    schedule: ScheduleManager
 
 
 type T6ConfigEntry = ConfigEntry[T6RuntimeData]
@@ -55,7 +58,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: T6ConfigEntry) -> bool:
     if getattr(hass, "http", None) is not None:
         await _async_register_card(hass)
     bridge = T6ZWaveBridge(hass, entry.data[CONF_SOURCE])
-    entry.runtime_data = T6RuntimeData(bridge=bridge)
+    schedule = ScheduleManager(
+        hass, entry.entry_id, hass.config.units.temperature_unit == UnitOfTemperature.CELSIUS
+    )
+    await schedule.async_load()
+    entry.runtime_data = T6RuntimeData(bridge=bridge, schedule=schedule)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _async_remove_fallback_device(hass, entry)
     # Parameter entities now exist; let the climate entity list them for the card.
