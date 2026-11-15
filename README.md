@@ -16,7 +16,7 @@ A custom integration and dashboard card for the **Honeywell T6 Pro Z-Wave (TH632
 1. Copy `custom_components/honeywell_t6` into your HA `config/custom_components/`. With HACS, add `https://github.com/keefeph/honeywell_t6` as a custom repository of type *Integration* instead (the repository must be public for HACS).
 2. Restart Home Assistant.
 3. Go to **Settings → Devices & services → Add integration → "Honeywell T6 Hysteresis"** and pick the T6's Z-Wave JS climate entity. It is a *helper*-type integration, so afterwards it is listed on the **Helpers** tab.
-4. Add the card to a dashboard. The integration registers the card file itself. If the editor says *Custom element doesn't exist*, add it under **Settings → Dashboards → ⋮ → Resources** as `/honeywell_t6/t6-hysteresis-card.js?v=1.1.0` (JavaScript module) and reload the page.
+4. Add the card to a dashboard. The integration registers the card file itself. If the editor says *Custom element doesn't exist*, add it under **Settings → Dashboards → ⋮ → Resources** as `/honeywell_t6/t6-hysteresis-card.js?v=1.1.1` (JavaScript module) and reload the page.
 
 ```yaml
 type: custom:t6-hysteresis-card

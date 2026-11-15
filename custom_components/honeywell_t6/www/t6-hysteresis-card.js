@@ -5,7 +5,7 @@
  * show_settings: true        # optional \u2013 installer parameter panel
  * range: [55, 85]            # optional \u2013 slider range (default: band \u00b18\u00b0)
  */
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.1.1";
 
 const CATEGORY_ORDER = [
   "Equipment",
@@ -113,6 +113,19 @@ const css = `
   .ptable tr.now td:first-child input { border-color: var(--accent); }
   .del button { border:none; background:none; color: var(--secondary-text-color); font-size: 1.2em; cursor:pointer; }
   .del button:disabled { opacity:.3; cursor: default; }
+  /* Narrow cards (phones, small columns): two lines per period. */
+  .sedit { container-type: inline-size; }
+  @container (max-width: 480px) {
+    .ptable, .ptable tbody { display: block; }
+    .ptable tr { display: grid; grid-template-columns: 1fr 64px 64px 28px; gap: 4px 6px; margin-bottom: 8px; }
+    .ptable tr > :nth-child(1) { grid-column: 1 / 4; grid-row: 1; }
+    .ptable tr > :nth-child(2) { grid-column: 1; grid-row: 2; }
+    .ptable tr > :nth-child(3) { grid-column: 2; grid-row: 2; }
+    .ptable tr > :nth-child(4) { grid-column: 3; grid-row: 2; }
+    .ptable tr > :nth-child(5) { grid-column: 4; grid-row: 1; }
+    .ptable td, .ptable th { width: auto !important; padding: 0; }
+    .ptable tr:first-child { margin-bottom: 2px; }
+  }
   .sactions { display:flex; gap:8px; align-items:center; margin-top: 10px; flex-wrap: wrap; }
   .smsg { font-size:.85em; color: var(--secondary-text-color); }
   .smsg.bad { color: var(--error-color, #db4437); }
