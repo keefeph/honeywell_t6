@@ -10,7 +10,7 @@ from homeassistant.const import Platform, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import CARD_URL, CONF_SOURCE, DOMAIN, SIGNAL_STATE, VERSION
+from .const import CARD_URL, CONF_SOURCE, DOMAIN, SIGNAL_STATE
 from .schedule import ScheduleManager
 from .zwave import T6ZWaveBridge
 
@@ -36,19 +36,23 @@ type T6ConfigEntry = ConfigEntry[T6RuntimeData]
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:
-    """Serve the Lovelace card and load it on every dashboard automatically."""
+    """Serve the card file at /honeywell_t6/t6-hysteresis-card.js.
+
+    Add it once under Settings -> Dashboards -> Resources (JavaScript module).
+    The integration deliberately does NOT inject it into every page as well:
+    two loaders race each other and an older cached copy can win. Responses
+    are sent without long-lived cache headers so updates show up on reload.
+    """
     if hass.data.get(f"{DOMAIN}_card"):
         return
     hass.data[f"{DOMAIN}_card"] = True
     try:
-        from homeassistant.components.frontend import add_extra_js_url  # noqa: PLC0415
         from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
 
         path = Path(__file__).parent / "www" / "t6-hysteresis-card.js"
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(CARD_URL, str(path), True)]
+            [StaticPathConfig(CARD_URL, str(path), False)]
         )
-        add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
     except Exception:  # noqa: BLE001 - never block setup because of the card
         _LOGGER.warning("Could not register the T6 dashboard card", exc_info=True)
 

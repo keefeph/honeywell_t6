@@ -5,7 +5,7 @@
  * show_settings: true        # optional \u2013 installer parameter panel
  * range: [55, 85]            # optional \u2013 slider range (default: band \u00b18\u00b0)
  */
-const CARD_VERSION = "1.1.1";
+const CARD_VERSION = "1.1.2";
 
 const CATEGORY_ORDER = [
   "Equipment",

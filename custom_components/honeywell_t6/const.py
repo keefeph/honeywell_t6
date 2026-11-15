@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Final
 
 DOMAIN: Final = "honeywell_t6"
-VERSION: Final = "1.1.1"
+VERSION: Final = "1.1.2"
 
 CONF_SOURCE: Final = "source_entity_id"
 CONF_STRATEGY: Final = "strategy"
